@@ -452,3 +452,20 @@ func TestRescanPciBus(t *testing.T) {
 	err := rescanPciBus()
 	assert.Nil(err)
 }
+
+func TestFindBlkCCWDevPath(t *testing.T) {
+
+	assert := assert.New(t)
+	expectDev := "vdb"
+	dir := fmt.Sprintf("/tmp/sys/bus/ccw/devices/0.0.0005/virtio5/block/%s", expectDev)
+	busPath := "/tmp/sys/bus/ccw/devices/0.0.0005"
+	err := os.MkdirAll(dir, mountPerm)
+	assert.Nil(err)
+
+	dev, err := findBlkCCWDevPath(busPath)
+	assert.Nil(err)
+
+	if dev != expectDev {
+		t.Errorf("Expected value %s got %s", expectDev, dev)
+	}
+}

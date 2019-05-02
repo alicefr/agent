@@ -27,6 +27,7 @@ const (
 	driver9pType        = "9p"
 	driverVirtioFSType  = "virtio-fs"
 	driverBlkType       = "blk"
+	driverBlkCCWType    = "blk-ccw"
 	driverMmioBlkType   = "mmioblk"
 	driverSCSIType      = "scsi"
 	driverNvdimmType    = "nvdimm"
@@ -43,6 +44,13 @@ var (
 	pciBusRescanFile = sysfsDir + "/bus/pci/rescan"
 	pciBusPathFormat = "%s/%s/pci_bus/"
 	systemDevPath    = "/dev"
+)
+
+// CCW variables
+var (
+	channelSubSystem = "/devices/css0"
+	sysCCWBusDir = sysfsDir + "/bus/ccw/devices"
+	blkCCWSuffix = "virtio"
 )
 
 // SCSI variables
@@ -63,6 +71,7 @@ type deviceHandler func(device pb.Device, spec *pb.Spec, s *sandbox) error
 var deviceHandlerList = map[string]deviceHandler{
 	driverMmioBlkType: virtioMmioBlkDeviceHandler,
 	driverBlkType:     virtioBlkDeviceHandler,
+	driverBlkCCWType:  virtioBlkCCWDeviceHandler,
 	driverSCSIType:    virtioSCSIDeviceHandler,
 	driverNvdimmType:  nvdimmDeviceHandler,
 }
@@ -178,6 +187,19 @@ func virtioMmioBlkDeviceHandler(device pb.Device, spec *pb.Spec, s *sandbox) err
 		return fmt.Errorf("Invalid path for virtioMmioBlkDevice")
 	}
 
+	return updateSpecDeviceList(device, spec)
+}
+
+func virtioBlkCCWDeviceHandler(device pb.Device, spec *pb.Spec, s *sandbox) error {
+	devPath, err := getBlkCCWDevPath(device.Id)
+	if err != nil {
+		return err
+	}
+	if devPath == "" {
+		return grpcStatus.Errorf(codes.InvalidArgument,
+                                "Storage source is empty")
+	}
+	device.VmPath = devPath
 	return updateSpecDeviceList(device, spec)
 }
 
@@ -421,6 +443,50 @@ func getSCSIDevPath(scsiAddr string) (string, error) {
 	return filepath.Join(devPrefix, scsiDiskName), nil
 }
 
+// findBlkCCWDevPath finds the CCW block disk name associated with the given CCW block path.
+func findBlkCCWDevPath(blkCCWpath string) (string, error) {
+	files, err := ioutil.ReadDir(blkCCWpath)
+	if err != nil {
+		return "", err
+	}
+
+	for _, f := range files {
+		if strings.Contains(f.Name(), blkCCWSuffix) {
+			subPath := filepath.Join(blkCCWpath, f.Name(), "block")
+			files2, err := ioutil.ReadDir(subPath)
+			if err != nil {
+				return "", err
+			}
+			if len(files2) != 1 {
+				return "", grpcStatus.Errorf(codes.Internal,
+					"Expecting a single blk CCW device in %s found %v",
+					subPath, files2)
+			}
+			return files2[0].Name(), nil
+		}
+	}
+	return "", grpcStatus.Errorf(codes.Internal, "Path %s for blk CCW not found", blkCCWpath)
+}
+
+// getBlkCCWDevPath returns the CCW block path based on the bus ID
+func getBlkCCWDevPath(bus string) (string, error) {
+	devPath := filepath.Join(sysCCWBusDir, bus)
+
+	checkUevent := func(uEv *uevent.Uevent) bool {
+		return (uEv.Action == "add" &&
+			strings.Contains(uEv.DevPath, channelSubSystem))
+}
+	if err := waitForDevice(devPath, bus, checkUevent); err != nil {
+		return "", err
+	}
+
+	blkCCWDiskName, err := findBlkCCWDevPath(devPath)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(devPrefix, blkCCWDiskName), nil
+}
 func addDevices(devices []*pb.Device, spec *pb.Spec, s *sandbox) error {
 	for _, device := range devices {
 		if device == nil {
