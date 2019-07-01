@@ -27,7 +27,7 @@ const (
 	typeVirtioFS   = "virtio_fs"
 	typeTmpFs      = "tmpfs"
 	devPrefix      = "/dev/"
-	timeoutHotplug = 3
+	timeoutHotplug = 20
 	mountPerm      = os.FileMode(0755)
 )
 
